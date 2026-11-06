@@ -1,64 +1,115 @@
-# ClimaLab · Primera práctica ETL
+# Pipeline ETL: Open-Meteo → Supabase
 
-Aplicación didáctica en castellano con Next.js 16, React, TypeScript, Tailwind y shadcn/ui. Extrae datos reales, conserva los JSON originales en memoria y permite inspeccionar y seleccionar exactamente qué se carga en Supabase. Los fixtures están aislados en las pruebas.
+Aplicación didáctica (Next.js 16 + TypeScript + Tailwind + shadcn/ui) para la
+primera práctica de Big Data. Extrae datos meteorológicos horarios de la API
+histórica de Open-Meteo, los transforma, limpia y filtra, y carga en Supabase
+exactamente los registros que el alumno selecciona.
 
-## Instalación y ejecución
-
-Node.js 22.18 o superior (recomendado 24 LTS) y npm.
-
-```bash
-npm ci
-cp .env.example .env.local
-npm run dev
-```
-
-En PowerShell, usa `Copy-Item .env.example .env.local` solo si no existe. Si la política de scripts bloquea npm, utiliza `npm.cmd`.
-
-Abre [http://localhost:3000](http://localhost:3000). Periodo inicial: 1–30 de septiembre de 2026; cinco ciudades, 3.600 horas previstas. Puedes solicitar entre 1 y 31 días inclusivos. Las fechas más recientes pueden tardar varios días en estar disponibles en el archivo histórico.
-
-## Configuración de Supabase
-
-1. Ejecuta una vez [la migración SQL](supabase/migrations/202610230001_mediciones_meteorologicas.sql) en el SQL Editor de tu proyecto, o con tu flujo habitual de Supabase CLI. Crea la tabla, restricciones, clave única `(ciudad, fecha_hora)` y RLS; no crea políticas públicas ni elimina tablas. Si la tabla ya existe, revisa su esquema antes de aplicar la migración.
-2. Configura `NEXT_PUBLIC_SUPABASE_URL` y **`SUPABASE_SECRET_KEY`** en `.env.local`. Usa una clave de servidor `sb_secret_...` desde Settings → API Keys. Como alternativa heredada, configura `SUPABASE_SERVICE_ROLE_KEY` con una clave service_role. Nunca uses `NEXT_PUBLIC_` para secretos. La publishable es opcional y no se utiliza para escribir ni leer este ETL.
-3. Reinicia el servidor tras modificar variables. La extracción y las operaciones locales funcionan sin clave secreta; la carga y consulta del destino muestran el error real de configuración.
-
-`.env.local` está excluido de Git. `.env.example` no contiene valores reales. No se imprimen credenciales. La migración requiere acceso administrativo; no puede ejecutarse con una publishable ni mediante el endpoint REST de tablas.
-
-## Pipeline
-
-- **Extracción:** peticiones secuenciales por ciudad a Open-Meteo en UTC, °C y mm; muestra ciudades terminadas, en curso, pendientes y fallidas. Un reintento sustituye únicamente la ciudad fallida. Los JSON originales se conservan durante la sesión, incluso entre extracciones, y pueden descargarse individualmente o juntos. Recargar la pestaña borra esa memoria.
-- **Transformación:** verifica la presencia y longitud de los arrays antes de combinarlos por índice. Convierte las fechas explícitamente a UTC. Ante arrays incoherentes, rechaza la respuesta completa de la ciudad con motivo, sin inventar parejas de valores; el JSON sigue disponible.
-- **Limpieza:** exige ciudad, fecha válida y tres números finitos; humedad 0–100 y precipitación no negativa. No convierte null, ausencias ni cadenas vacías en cero, ni impone umbrales arbitrarios de temperatura. Conserva la **primera fila válida** por ciudad y hora; registra el motivo de cada rechazo y duplicado.
-- **Filtrado y selección:** ciudades, intervalo UTC, rangos de mediciones, lluvia (`> 0`) y orden ascendente/descendente. Se aplican al conjunto completo antes de paginar en 25 filas. La selección cruza páginas y «Seleccionar coincidencias» las incluye todas. Los filtros no seleccionan filas nuevas. Las seleccionadas fuera del filtro se cuentan y no entran en una nueva carga. La vista previa contiene exactamente la intersección filtrada y seleccionada, en el orden elegido.
-- **Carga:** congela una copia de las filas y su orden. Envía lotes de hasta 500 desde el servidor con upsert y después verifica las claves exactas en grupos de 25. Un lote solo se completa cuando todas sus claves existen en destino. Los filtros posteriores no modifican esa copia. Conserva los lotes exitosos y reintenta únicamente los fallidos con sus filas originales. Se cuentan procesados/verificados, fallidos o sin verificar, y pendientes; no se inventa la separación entre insertados y actualizados. Si la escritura ocurrió pero falla la verificación, el lote queda como error y puede reintentarse sin duplicar.
-
-Los estados, contadores y tiempos son reales. La extracción comienza con cero filas de entrada; el volumen esperado se muestra aparte. La salida del filtrado y selección es el conjunto preparado para cargar. La limpieza incluye también los descartes estructurales identificados en «Rechazados».
-
-**Datos en Supabase** consulta registros persistidos a través del servidor, con paginación, ciudad, fechas inclusivas, orden y actualización. Los pendientes locales no aparecen ahí. El orden de inserción no determina el orden de consulta: se necesita `ORDER BY`; la lectura del destino especifica el orden y un desempate estable por `id`.
-
-## Seguridad y publicación
-
-Esta práctica no tiene autenticación: **los endpoints solo están habilitados en `next dev` con host localhost**. Las escrituras exigen origen coincidente. Se bloquean peticiones entre sitios, se limita el cuerpo a 160 KB y 500 filas, se validan también en servidor y se admiten únicamente las columnas previstas. El cliente y la instancia del servidor impiden cargas simultáneas. Cada lote es independiente; un fallo no revierte los anteriores.
-
-`npm run build` y `npm start` permiten revisar la interfaz de producción, pero sus APIs devuelven 403. Antes de publicar con acceso a datos, añade autenticación y autorización, límites por usuario y control de concurrencia compartido si hay varias instancias. La clave secreta permanece en el servidor. RLS sigue activo, sin permisos para `anon` o `authenticated` en esta tabla.
-
-## Verificación
+## Instalación
 
 ```bash
-npm test
-npm run test:integration
-npm run test:e2e
-npm run typecheck
-npm run lint
-npm run build
+npm install
+cp .env.example .env.local   # y rellena los valores
 ```
 
-- `npm test`: fixtures aislados para arrays, nulos, tipos, UTC, duplicados, filtros/orden antes de paginar, selección entre páginas, copia congelada, payload, fallos parciales y reintentos. El adaptador REST usa transporte controlado y almacenamiento en memoria para comprobar dos upserts sin duplicados; eso no sustituye la integración real.
-- `npm run test:integration`: extracción real de Barcelona el 1 de septiembre de 2026, 24 filas en UTC. Si hay clave secreta y la tabla existe, **escribe esas 24 mediciones reales dos veces** y comprueba que siguen siendo 24. No escribe fixtures. Si falta la clave, informa de la prueba de Supabase omitida.
-- `npm run test:e2e`: navegador con una extracción real; escenarios controlados separados para selección, vista previa/payload, reintento por ciudad, copia congelada durante carga, fallos parciales, validaciones HTTP y móvil. Las cargas se interceptan y no escriben en Supabase. Reutiliza o inicia un servidor en localhost:3000. Usa Microsoft Edge instalado. En otros entornos: `npx playwright install chromium` y configura `PLAYWRIGHT_CHANNEL=chromium` (PowerShell: `$env:PLAYWRIGHT_CHANNEL='chromium'`). `E2E_BASE_URL` permite elegir otro servidor local ya iniciado.
+| Variable | Dónde se usa | Notas |
+| --- | --- | --- |
+| `SUPABASE_URL` | servidor | URL del proyecto. También se acepta `NEXT_PUBLIC_SUPABASE_URL`. |
+| `SUPABASE_SECRET_KEY` | **solo servidor** | Clave `sb_secret_…` (o la *service_role* antigua en `SUPABASE_SERVICE_ROLE_KEY`). Nunca con prefijo `NEXT_PUBLIC_`. |
+| `ETL_PERMITIR_EN_PRODUCCION` | servidor | Opcional. Ver «Seguridad». |
 
-Verificación inicial: 14 pruebas unitarias, extracción real y 7 pruebas de navegador superadas. Tipos, lint y build correctos. La migración, carga real y segunda carga real sin duplicados quedan pendientes mientras falte la clave secreta de Supabase. No se ha simulado su éxito.
+La clave publicable no es necesaria: el navegador nunca habla con Supabase.
 
-## Documentación consultada
+### Crear la tabla
 
-[Open-Meteo](https://open-meteo.com/en/docs/historical-weather-api), [claves de Supabase](https://supabase.com/docs/guides/getting-started/api-keys), [RLS](https://supabase.com/docs/guides/database/postgres/row-level-security), [upsert](https://supabase.com/docs/reference/javascript/upsert) y [PostgREST](https://docs.postgrest.org/en/stable/references/api/tables_views.html). Datos meteorológicos de Open-Meteo bajo [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+Ejecuta [`supabase/migrations/202610230001_mediciones_meteorologicas.sql`](supabase/migrations/202610230001_mediciones_meteorologicas.sql)
+en **Supabase → SQL Editor** (o `supabase db push` si usas la CLI). Crea la
+tabla `mediciones_meteorologicas` con `UNIQUE (ciudad, fecha_hora)`, `CHECK`
+de humedad (0–100) y precipitación (≥ 0), RLS activado sin políticas públicas y
+los `GRANT` explícitos para `service_role` que Supabase exige a las tablas
+nuevas desde 2026.
+
+## Ejecución
+
+```bash
+npm run dev                # http://localhost:3000
+npm test                   # pruebas unitarias (sin red)
+npm run test:integracion   # Open-Meteo y Supabase reales (requiere .env.local y la tabla)
+npm run typecheck && npm run lint && npm run build
+```
+
+## El pipeline
+
+```
+Extracción → Transformación → Limpieza → Filtrado y selección → Carga
+```
+
+1. **Extracción.** Una petición por ciudad a
+   `archive-api.open-meteo.com/v1/archive` con `temperature_2m`,
+   `relative_humidity_2m` y `precipitation`, `timezone=UTC`, °C y mm. Máximo 31
+   días. El JSON original se guarda en memoria durante la sesión y se puede
+   descargar. Si una ciudad falla, se reintenta solo esa ciudad y sus datos
+   sustituyen a los anteriores (no se suman).
+2. **Transformación.** Los arrays paralelos de `hourly` se convierten en un
+   registro por ciudad y hora: `ciudad, fecha_hora, temperatura_c, humedad_pct,
+   precipitacion_mm`. Se comprueba que los arrays tengan la misma longitud. La
+   hora (`"2026-09-01T13:00"`, sin zona) se interpreta explícitamente en UTC
+   usando `utc_offset_seconds`. `null`, `""` o valores ausentes se quedan como
+   `null` y se anotan como incidencias. **Nunca se convierten en 0.**
+3. **Limpieza.** Se rechazan, con su motivo, los registros sin ciudad, sin
+   fecha válida o sin alguna medición, con humedad fuera de 0–100 o con
+   precipitación negativa. La temperatura no tiene umbrales. **Duplicados:**
+   primero se valida y después, entre los válidos con la misma `ciudad +
+   fecha_hora`, se conserva la *primera aparición* en el orden de extracción.
+   Las demás se rechazan indicando qué posición se conservó.
+4. **Filtrado y selección.** `válidos → filtros → ordenación → selección`.
+   Filtros por ciudad, intervalo UTC, temperatura, humedad, precipitación y
+   «solo lluvia» (> 0 mm). La paginación solo afecta a la vista.
+   - **Selección automática (por defecto):** se selecciona todo lo que cumple
+     los filtros y se recalcula al cambiarlos, así que la fase se completa sola.
+   - **Selección manual:** al marcar o desmarcar cualquier fila (o vaciar la
+     selección), se parte de lo que estaba seleccionado y se pasa a modo
+     manual. Desde ese momento, cambiar los filtros ya no añade filas. Un botón
+     permite volver al modo automático.
+
+   Solo se suben las filas seleccionadas que *siguen* cumpliendo los filtros, y
+   se indica cuántas quedan fuera. Los excluidos por filtros se muestran aparte
+   de los rechazados por calidad.
+5. **Carga.** Al pulsar «Subir N registros», se congela una copia del conjunto
+   y de su orden. Se envía en lotes de ≤ 500 a `/api/supabase/carga`, que
+   vuelve a validar y hace un *upsert* por `(ciudad, fecha_hora)`. Repetir la
+   carga no crea duplicados. Cada lote muestra su estado real. Un lote fallido
+   no anula los anteriores y se puede reintentar solo él. Supabase no distingue
+   insertados de actualizados en un upsert, así que se informa de *procesados*.
+   Al terminar, se consulta por lotes que todas las claves existen en destino.
+
+La tabla SQL no conserva el orden de inserción. Para leer los datos ordenados,
+usa siempre `ORDER BY` (la pestaña «Datos en Supabase» lo hace explícitamente).
+
+## Seguridad
+
+- Toda escritura y lectura de Supabase ocurre en *route handlers* del servidor
+  (`app/api/supabase/*`). La clave secreta solo se lee en
+  `lib/supabase/servidor.ts`, marcado con `server-only`.
+- El servidor valida tipos, rangos, ciudades permitidas, campos extra,
+  duplicados dentro del lote, ≤ 500 registros y ≤ 256 KB por petición.
+- RLS activado, sin políticas: los roles `anon` y `authenticated` no tienen
+  acceso.
+- **El proyecto no tiene autenticación.** Los endpoints funcionan con
+  `npm run dev` y responden 403 en producción salvo que se defina
+  `ETL_PERMITIR_EN_PRODUCCION=true`. **Antes de publicar la aplicación hay que
+  añadir autenticación** y proteger `/api/supabase/*`. Las peticiones de
+  escritura con un `Origin` distinto se rechazan.
+- Los logs solo registran el código y el mensaje de error de Supabase.
+
+## Estructura
+
+```
+app/api/supabase/{estado,carga,verificacion,datos}/route.ts  endpoints de servidor
+lib/etl/                 lógica pura del pipeline (testeable sin navegador)
+lib/supabase/            cliente de servidor y protección de endpoints
+hooks/use-pipeline-etl.ts estado de la pantalla
+components/etl/          interfaz (pipeline, contadores, pestañas, tablas)
+supabase/migrations/     SQL de la tabla
+tests/                   pruebas; tests/fixtures/controlado-* son datos FICTICIOS solo para pruebas
+```

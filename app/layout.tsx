@@ -1,25 +1,35 @@
 import type { Metadata } from "next"
-import { Geist_Mono, IBM_Plex_Sans } from "next/font/google"
+import { Cinzel, EB_Garamond, Geist_Mono, Inter } from "next/font/google"
 
 import "./globals.css"
-import "./etl.css"
 import { ThemeProvider } from "@/components/theme-provider"
+import { SCRIPT_FILTRO } from "@/lib/filtro-visual"
 import { cn } from "@/lib/utils"
 
-const ibmPlexSans = IBM_Plex_Sans({
-  subsets: ["latin"],
-  variable: "--font-sans",
-})
+const inter = Inter({ subsets: ["latin"], variable: "--font-sans" })
 
 const fontMono = Geist_Mono({
   subsets: ["latin"],
   variable: "--font-mono",
 })
 
+// Fuentes del filtro "Vintage": sin precarga, solo se descargan si se activa.
+const fontVintage = EB_Garamond({
+  subsets: ["latin"],
+  variable: "--font-vintage",
+  preload: false,
+})
+
+const fontVintageTitulo = Cinzel({
+  subsets: ["latin"],
+  variable: "--font-vintage-titulo",
+  preload: false,
+})
+
 export const metadata: Metadata = {
-  title: "ClimaLab · Tu primer pipeline ETL",
+  title: "Pipeline ETL · Open-Meteo → Supabase",
   description:
-    "Aprende a extraer, transformar, limpiar y cargar datos meteorológicos reales de Open-Meteo en Supabase.",
+    "Práctica de Big Data: extracción, transformación, limpieza, filtrado y carga de datos meteorológicos.",
 }
 
 export default function RootLayout({
@@ -35,11 +45,16 @@ export default function RootLayout({
         "antialiased",
         fontMono.variable,
         "font-sans",
-        ibmPlexSans.variable
+        inter.variable,
+        fontVintage.variable,
+        fontVintageTitulo.variable
       )}
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: SCRIPT_FILTRO }} />
+      </head>
       <body>
-        <ThemeProvider forcedTheme="light">{children}</ThemeProvider>
+        <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>
   )
