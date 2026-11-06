@@ -16,7 +16,8 @@ cp .env.example .env.local   # y rellena los valores
 | --- | --- | --- |
 | `SUPABASE_URL` | servidor | URL del proyecto. También se acepta `NEXT_PUBLIC_SUPABASE_URL`. |
 | `SUPABASE_SECRET_KEY` | **solo servidor** | Clave `sb_secret_…` (o la *service_role* antigua en `SUPABASE_SERVICE_ROLE_KEY`). Nunca con prefijo `NEXT_PUBLIC_`. |
-| `ETL_PERMITIR_EN_PRODUCCION` | servidor | Opcional. Ver «Seguridad». |
+| `ETL_PASSWORD` | servidor | Necesaria para publicar. Ver «Seguridad». |
+| `ETL_PERMITIR_EN_PRODUCCION` | servidor | Opcional y desaconsejada. Ver «Seguridad». |
 
 La clave publicable no es necesaria: el navegador nunca habla con Supabase.
 
@@ -95,10 +96,12 @@ usa siempre `ORDER BY` (la pestaña «Datos en Supabase» lo hace explícitament
   duplicados dentro del lote, ≤ 500 registros y ≤ 256 KB por petición.
 - RLS activado, sin políticas: los roles `anon` y `authenticated` no tienen
   acceso.
-- **El proyecto no tiene autenticación.** Los endpoints funcionan con
-  `npm run dev` y responden 403 en producción salvo que se defina
-  `ETL_PERMITIR_EN_PRODUCCION=true`. **Antes de publicar la aplicación hay que
-  añadir autenticación** y proteger `/api/supabase/*`. Las peticiones de
+- **Contraseña.** Si se define `ETL_PASSWORD`, `proxy.ts` pide esa contraseña
+  (HTTP Basic, cualquier usuario) para la página y la API, y los endpoints la
+  vuelven a comprobar. Sin ella, los endpoints funcionan con `npm run dev` y
+  responden 403 en producción (salvo `ETL_PERMITIR_EN_PRODUCCION=true`, que los
+  deja abiertos y no se recomienda). Para publicar en Vercel, define
+  `SUPABASE_URL`, `SUPABASE_SECRET_KEY` y `ETL_PASSWORD`. Las peticiones de
   escritura con un `Origin` distinto se rechazan.
 - Los logs solo registran el código y el mensaje de error de Supabase.
 
