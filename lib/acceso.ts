@@ -5,7 +5,8 @@
  * route handlers.
  */
 export function contrasenaConfigurada(): string | null {
-  const contrasena = process.env.ETL_PASSWORD
+  // Se recortan espacios y saltos de línea pegados por error al guardarla.
+  const contrasena = process.env.ETL_PASSWORD?.trim()
   return contrasena ? contrasena : null
 }
 
@@ -25,13 +26,18 @@ export function credencialesValidas(
   if (!cabecera?.startsWith("Basic ")) return false
   let decodificado: string
   try {
-    decodificado = atob(cabecera.slice("Basic ".length).trim())
+    // atob devuelve bytes; el navegador los envía en UTF-8 (ñ, tildes, €…).
+    const bytes = Uint8Array.from(
+      atob(cabecera.slice("Basic ".length).trim()),
+      (c) => c.charCodeAt(0)
+    )
+    decodificado = new TextDecoder("utf-8", { fatal: true }).decode(bytes)
   } catch {
     return false
   }
   const separador = decodificado.indexOf(":")
   if (separador === -1) return false
-  return igualesSeguro(decodificado.slice(separador + 1), contrasena)
+  return igualesSeguro(decodificado.slice(separador + 1).trim(), contrasena)
 }
 
 export function respuestaNoAutorizada(): Response {
